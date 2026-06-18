@@ -240,7 +240,7 @@ def build_html(article: str, entities: list) -> str:
     # HTML 組み立て
     parts = [
         '<div style="font-size:0.95rem;line-height:1.9;font-family:sans-serif;'
-        'background:#fafafa;padding:20px;border-radius:8px;border:1px solid #ddd">'
+        'background:#fafafa;color:#1a1a1a;padding:20px;border-radius:8px;border:1px solid #ddd">'
     ]
     cursor = 0
     for ann in merged:
