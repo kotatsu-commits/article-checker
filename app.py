@@ -5,7 +5,6 @@
 
 import json
 import html
-import re
 import os
 from io import StringIO
 
@@ -23,69 +22,66 @@ st.set_page_config(
 )
 
 # ════════════════════════════════════════════════
-# 名簿パーサー（Claude API）
+# 名簿パーサー（Claude API / Tool Use）
 # ════════════════════════════════════════════════
 
-ROSTER_PARSE_SYSTEM = """\
-あなたは名簿テキストを解析するアシスタントです。
-入力テキストから選手・スタッフの情報を抽出し、JSON形式のみで返してください。説明文は不要です。"""
+ROSTER_TOOL = {
+    "name": "save_roster",
+    "description": "名簿テキストから抽出した全メンバーを保存する",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "members": {
+                "type": "array",
+                "description": "全メンバーのリスト",
+                "items": {
+                    "type": "object",
+                    "description": (
+                        "1名分のデータ。チーム名と氏名は必須。"
+                        "学年・役職・ポジション・背番号など名簿に存在する情報は"
+                        "日本語フィールド名で追加する。"
+                    ),
+                    "properties": {
+                        "チーム名": {"type": "string"},
+                        "氏名": {"type": "string"},
+                    },
+                    "required": ["チーム名", "氏名"],
+                    "additionalProperties": {"type": "string"},
+                },
+            }
+        },
+        "required": ["members"],
+    },
+}
 
 ROSTER_PARSE_USER_TMPL = """\
-以下の名簿テキストから全員の情報を抽出してください。
+以下の名簿テキストから全員の情報を抽出し、save_roster ツールを呼び出してください。
 
 抽出ルール：
 - 「チーム名」と「氏名」は必須フィールドです
-- テキストに存在するその他の情報（学年、ポジション、役職、背番号、地域名など）も全て抽出してください
+- テキストに存在するその他の情報（学年、ポジション、役職、背番号、地域名など）も全て含めてください
 - フィールド名は日本語で、内容に合わせて自然な名称にしてください
 - チーム名が記載されていない行は文脈から推測してください
-- 氏名はできる限り姓名を結合した完全な表記にしてください
-
-出力フォーマット（JSONのみ）：
-{{
-  "members": [
-    {{"チーム名": "xxx", "氏名": "xxx", "（その他のフィールド）": "xxx"}},
-    ...
-  ]
-}}
+- 氏名は姓名を結合した完全な表記にしてください
 
 名簿テキスト：
 {text}
 """
 
 
-def _extract_text(response) -> str:
-    """レスポンスから TextBlock のテキストを取得する（ThinkingBlock を読み飛ばす）"""
-    for block in response.content:
-        if hasattr(block, "text"):
-            return block.text
-    raise ValueError("レスポンスにテキストブロックが含まれていません")
-
-
-def _extract_json(text: str) -> str:
-    """テキストから最初のJSONオブジェクトを抽出する"""
-    # コードブロック内のJSONを優先
-    m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-    if m:
-        return m.group(1).strip()
-    # コードブロックがなければ最初の { 〜 最後の } を取り出す
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        return text[start:end + 1]
-    return text.strip()
-
-
 def parse_roster_with_claude(text: str, api_key: str) -> list:
     client = anthropic.Anthropic(api_key=api_key)
-    user_msg = ROSTER_PARSE_USER_TMPL.format(text=text)
     response = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=4096,
-        system=ROSTER_PARSE_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
+        tools=[ROSTER_TOOL],
+        tool_choice={"type": "any"},
+        messages=[{"role": "user", "content": ROSTER_PARSE_USER_TMPL.format(text=text)}],
     )
-    raw = _extract_json(_extract_text(response))
-    return json.loads(raw).get("members", [])
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "save_roster":
+            return block.input.get("members", [])
+    return []
 
 
 def parse_roster_csv(source) -> list:
@@ -102,58 +98,67 @@ def parse_roster_csv(source) -> list:
 
 
 # ════════════════════════════════════════════════
-# Claude API による照合
+# Claude API による照合（Tool Use）
 # ════════════════════════════════════════════════
 
-CHECK_SYSTEM = """\
-あなたはスポーツ記事の校正アシスタントです。
-提供された名簿と記事を照合し、固有名詞の誤りを検出します。
-応答は必ずJSON形式のみで返してください。余計な説明文は不要です。"""
+CHECK_TOOL = {
+    "name": "save_check_result",
+    "description": "記事の固有名詞照合結果を保存する",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "entities": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text":       {"type": "string", "description": "記事内の表記（完全一致する文字列）"},
+                        "type":       {"type": "string", "enum": ["人名", "チーム名", "地域名", "その他"]},
+                        "status":     {"type": "string", "enum": ["ok", "mismatch", "not_found", "warning", "scope_out"]},
+                        "suggestion": {"type": "string"},
+                        "issue":      {"type": "string"},
+                    },
+                    "required": ["text", "type", "status"],
+                },
+            },
+            "summary": {
+                "type": "object",
+                "properties": {
+                    "total":     {"type": "integer"},
+                    "ok":        {"type": "integer"},
+                    "mismatch":  {"type": "integer"},
+                    "not_found": {"type": "integer"},
+                    "warning":   {"type": "integer"},
+                },
+                "required": ["total", "ok", "mismatch", "not_found", "warning"],
+            },
+        },
+        "required": ["entities", "summary"],
+    },
+}
 
 CHECK_USER_TMPL = """\
+以下の名簿と記事を照合し、save_check_result ツールで結果を報告してください。
+
 ## 名簿データ（JSON）
 名簿のフィールドは入力によって異なります。「チーム名」と「氏名」は共通フィールドです。
 それ以外（学年・役職・ポジション・背番号・地域など）は名簿に含まれる場合のみ存在します。
-```json
 {roster}
-```
 
 ## 記事テキスト
-```
 {article}
-```
 
 ## 照合タスク
 記事テキスト内に登場する固有名詞を**全て**抽出し、名簿と照合してください。
 - 人名（選手名・監督名・コーチ名・その他スタッフ名）
 - チーム名
 - 名簿に含まれるその他の固有名詞（地域名・所属機関名など）
-- 名簿に属性情報（学年・ポジション・背番号など）がある場合、記事内でそれらが言及されていれば整合性も確認
+- 名簿に属性情報（学年・ポジション・背番号など）がある場合、記事内で言及されていれば整合性も確認
 
 ## 注意事項
 - 名簿に登録されていない大会来賓・連盟役員・記者名などは対象外（status="scope_out"）
-- "text" フィールドは記事内に**そのまま存在する文字列**としてください（ハイライト検索に使用します）
+- text フィールドは記事内に**そのまま存在する文字列**にしてください（ハイライト検索に使用します）
 - 同じ固有名詞が複数回出現する場合、最初の1回だけを報告してください
-
-## 出力フォーマット（JSONのみ）
-{{
-  "entities": [
-    {{
-      "text": "記事内の表記（完全一致する文字列）",
-      "type": "人名|チーム名|地域名|その他",
-      "status": "ok|mismatch|not_found|warning|scope_out",
-      "suggestion": "修正候補（不一致時のみ、なければ省略）",
-      "issue": "問題の説明（不一致時のみ、なければ省略）"
-    }}
-  ],
-  "summary": {{
-    "total": 0,
-    "ok": 0,
-    "mismatch": 0,
-    "not_found": 0,
-    "warning": 0
-  }}
-}}
 
 statusの意味：
 - ok        : 名簿と一致、または問題なし
@@ -171,11 +176,14 @@ def check_with_claude(article: str, roster: list, api_key: str) -> dict:
     response = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=8192,
-        system=CHECK_SYSTEM,
+        tools=[CHECK_TOOL],
+        tool_choice={"type": "any"},
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = _extract_json(_extract_text(response))
-    return json.loads(raw)
+    for block in response.content:
+        if block.type == "tool_use" and block.name == "save_check_result":
+            return block.input
+    return {"entities": [], "summary": {"total": 0, "ok": 0, "mismatch": 0, "not_found": 0, "warning": 0}}
 
 
 # ════════════════════════════════════════════════
