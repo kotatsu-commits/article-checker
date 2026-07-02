@@ -53,6 +53,14 @@ ROSTER_PARSE_USER_TMPL = """\
 """
 
 
+def _extract_text(response) -> str:
+    """レスポンスから TextBlock のテキストを取得する（ThinkingBlock を読み飛ばす）"""
+    for block in response.content:
+        if hasattr(block, "text"):
+            return block.text
+    raise ValueError("レスポンスにテキストブロックが含まれていません")
+
+
 def parse_roster_with_claude(text: str, api_key: str) -> list:
     client = anthropic.Anthropic(api_key=api_key)
     user_msg = ROSTER_PARSE_USER_TMPL.format(text=text)
@@ -62,7 +70,7 @@ def parse_roster_with_claude(text: str, api_key: str) -> list:
         system=ROSTER_PARSE_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = response.content[0].text.strip()
+    raw = _extract_text(response).strip()
     raw = re.sub(r"^```(?:json)?\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw.strip()).get("members", [])
@@ -154,7 +162,7 @@ def check_with_claude(article: str, roster: list, api_key: str) -> dict:
         system=CHECK_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = response.content[0].text.strip()
+    raw = _extract_text(response).strip()
     raw = re.sub(r"^```(?:json)?\n?", "", raw)
     raw = re.sub(r"\n?```$", "", raw)
     return json.loads(raw.strip())
