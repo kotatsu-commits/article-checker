@@ -61,19 +61,31 @@ def _extract_text(response) -> str:
     raise ValueError("レスポンスにテキストブロックが含まれていません")
 
 
+def _extract_json(text: str) -> str:
+    """テキストから最初のJSONオブジェクトを抽出する"""
+    # コードブロック内のJSONを優先
+    m = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    # コードブロックがなければ最初の { 〜 最後の } を取り出す
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end > start:
+        return text[start:end + 1]
+    return text.strip()
+
+
 def parse_roster_with_claude(text: str, api_key: str) -> list:
     client = anthropic.Anthropic(api_key=api_key)
     user_msg = ROSTER_PARSE_USER_TMPL.format(text=text)
     response = client.messages.create(
-        model="claude-sonnet-5",
+        model="claude-haiku-4-5-20251001",
         max_tokens=4096,
         system=ROSTER_PARSE_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = _extract_text(response).strip()
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw.strip()).get("members", [])
+    raw = _extract_json(_extract_text(response))
+    return json.loads(raw).get("members", [])
 
 
 def parse_roster_csv(source) -> list:
@@ -162,10 +174,8 @@ def check_with_claude(article: str, roster: list, api_key: str) -> dict:
         system=CHECK_SYSTEM,
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = _extract_text(response).strip()
-    raw = re.sub(r"^```(?:json)?\n?", "", raw)
-    raw = re.sub(r"\n?```$", "", raw)
-    return json.loads(raw.strip())
+    raw = _extract_json(_extract_text(response))
+    return json.loads(raw)
 
 
 # ════════════════════════════════════════════════
