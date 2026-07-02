@@ -71,12 +71,14 @@ ROSTER_PARSE_USER_PREFIX = """\
 def parse_roster_with_claude(text: str, api_key: str) -> list:
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
+        model="claude-sonnet-4-6",
+        max_tokens=16000,
         tools=[ROSTER_TOOL],
         tool_choice={"type": "any"},
         messages=[{"role": "user", "content": ROSTER_PARSE_USER_PREFIX + text}],
     )
+    if response.stop_reason == "max_tokens":
+        st.warning("⚠️ 名簿が長すぎて途中で打ち切られました。テキストを分割して再解析してください。")
     for block in response.content:
         if block.type == "tool_use" and block.name == "save_roster":
             return block.input.get("members", [])
