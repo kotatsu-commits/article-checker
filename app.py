@@ -202,11 +202,13 @@ def check_with_claude(article: str, roster: list, api_key: str) -> dict:
 # ════════════════════════════════════════════════
 
 COLORS = {
+    "ok":        "#a8e6a3",
     "mismatch":  "#ff9999",
     "not_found": "#ffcc88",
     "warning":   "#ffff88",
 }
 LABELS = {
+    "ok":        "一致",
     "mismatch":  "誤字",
     "not_found": "名簿なし",
     "warning":   "要確認",
@@ -253,6 +255,8 @@ def build_html(article: str, entities: list) -> str:
         tip = ent.get("issue", "")
         if ent.get("suggestion"):
             tip += f"　→ 候補: {ent['suggestion']}"
+        if not tip and ent["status"] == "ok":
+            tip = "名簿と一致"
         parts.append(
             f'<mark style="background:{color};padding:1px 4px;border-radius:3px;'
             f'cursor:help" title="{html.escape(tip)}">'
