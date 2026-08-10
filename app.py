@@ -614,7 +614,7 @@ def main():
                 st.info("名簿を読み込んでください。")
 
         with tab_reference:
-            st.caption("発表資料・過去記事などのPDFを添付すると、固有名詞チェック・AI校閲の両方で事実確認の根拠として使用します。")
+            st.caption("発表資料などのPDFを添付すると、固有名詞チェック・AI校閲の両方で事実確認の根拠として使用します。")
             reference_files = st.file_uploader(
                 "参考資料PDFをアップロード（複数可）",
                 type=["pdf"],
